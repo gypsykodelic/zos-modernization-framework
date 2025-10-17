@@ -51,6 +51,42 @@ class MigrationLogParser:
         
         return info
     
+    def extract_nomenclature_patterns(self) -> Dict[str, set]:
+        """Extrae patrones de nomenclatura de los archivos migrados"""
+        patterns = {
+            'programs': set(),
+            'copybooks': set(),
+            'dclgens': set(),
+            'jcls': set()
+        }
+        
+        # Patrones para programas COBOL
+        cobol_matches = re.findall(r'/([A-Z0-9]+)\.cbl', self.log_content)
+        for match in cobol_matches[:10]:  # Tomar muestra
+            # Extraer patrón (ej: B471JXAC -> B471J*)
+            if len(match) >= 5:
+                pattern = match[:5] + '*'
+                patterns['programs'].add(pattern)
+            patterns['programs'].add(match)
+        
+        # Patrones para copybooks
+        copy_matches = re.findall(r'/([A-Z0-9]+)\.cpy', self.log_content)
+        for match in copy_matches[:10]:
+            if len(match) >= 4:
+                pattern = match[:4] + '*'
+                patterns['copybooks'].add(pattern)
+            patterns['copybooks'].add(match)
+        
+        # Patrones para JCLs
+        jcl_matches = re.findall(r'/([A-Z0-9]+)\.jcl', self.log_content)
+        for match in jcl_matches[:10]:
+            if len(match) >= 5:
+                pattern = match[:5] + '*'
+                patterns['jcls'].add(pattern)
+            patterns['jcls'].add(match)
+        
+        return patterns
+    
     def extract_environment_data(self, env_name: str) -> Dict:
         """Extrae datos de un entorno específico (EXPLO, PREP, INTE)"""
         env_data = {
@@ -118,7 +154,8 @@ class MigrationLogParser:
         """Parsea todo el log y retorna la información estructurada"""
         data = {
             'general': self.extract_general_info(),
-            'environments': []
+            'environments': [],
+            'nomenclature': self.extract_nomenclature_patterns()
         }
         
         # Detectar entornos migrados
@@ -148,13 +185,13 @@ class MarkdownReportGenerator:
 
 |  |  |
 |---------|-------|
-| **Estado de Ejecución** | {general['status']} |
+| **Estado de Ejecución** | `{general['status']}` |
 | **Usuario** | {general['user']} |
-| **Repositorio Destino** | {general['repository']} |
-| **Rama Principal** | {general['main_branch']} |
-| **Entornos Migrados** | {env_count} ({env_names}) |
-| **Commit Principal** | {general['main_commit']} |
-| **Workspace** | {general['workspace']} |
+| **Repositorio Destino** | `{general['repository']}` |
+| **Rama Principal** | `{general['main_branch']}` |
+| **Entornos Migrados** | `{env_count}` ({env_names}) |
+| **Commit Principal** | `{general['main_commit']}` |
+| **Workspace** | `{general['workspace']}` |
 """
     
     def generate_volumetry_table(self) -> str:
@@ -167,13 +204,13 @@ class MarkdownReportGenerator:
         
         # Filas
         rows = []
-        rows.append(['| **Rama Destino** |'] + [f' {env["branch"]} |' for env in envs])
+        rows.append(['| **Rama Destino** |'] + [f' `{env["branch"]}` |' for env in envs])
         rows.append(['| **Programas COBOL** |'] + [f' {env["programs"]} |' for env in envs])
         rows.append(['| **Copybooks** |'] + [f' {env["copybooks"]} |' for env in envs])
         rows.append(['| **DCLGENs** |'] + [f' {env["dclgens"]} |' for env in envs])
         rows.append(['| **JCLs** |'] + [f' {env["jcls"]} |' for env in envs])
-        rows.append(['| **Total Archivos** |'] + [f' {env["total"]} |' for env in envs])
-        rows.append(['| **Errores** |'] + [f' {env["errors"]}{"*" if env["errors"] > 0 else ""} |' for env in envs])
+        rows.append(['| **Total Archivos** |'] + [f' `{env["total"]}` |' for env in envs])
+        rows.append(['| **Errores** |'] + [f' `{env["errors"]}`{"*" if env["errors"] > 0 else ""} |' for env in envs])
         
         table = ''.join(headers) + '\n' + ''.join(separator) + '\n'
         for row in rows:
@@ -202,7 +239,8 @@ class MarkdownReportGenerator:
         }
         
         description = env_descriptions.get(env['name'], f'Migrar el entorno {env["name"]}.')
-        
+        repository = self.data['general']['repository']
+
         # Datasets origen
         datasets_text = ''
         if env['programs'] > 0:
@@ -240,8 +278,8 @@ class MarkdownReportGenerator:
 {datasets_text}
 **Proceso:**
 - Rama {'destino' if env['name'] == 'EXPLO' else 'creada'}: `{env['branch']}`
-- {'Limpieza previa de directorios' if env['name'] != 'EXPLO' else 'Directorio destino: `/usr/lpp/IDZ/jenkins/workspace/.../esp-dvi-app-mainframe`'}
-- Codificación: IBM-1145
+- {'Limpieza previa de directorios' if env['name'] != 'EXPLO' else f"github.com/mapfre-tech/{repository}"}
+- Codificación: `IBM-1145`
 
 **Resultado:**
 {result_text}
@@ -249,6 +287,30 @@ class MarkdownReportGenerator:
     
     def generate_technical_observations(self) -> str:
         """Genera la sección de observaciones técnicas"""
+        nomenclature = self.data.get('nomenclature', {})
+        
+        # Generar sección de patrones de nomenclatura
+        nomenclature_text = ""
+        
+        if nomenclature.get('programs'):
+            programs_list = ', '.join([f'`{p}.cbl`' for p in sorted(nomenclature['programs'])[:5]])
+            nomenclature_text += f"- Programas COBOL: {programs_list}\n"
+        
+        if nomenclature.get('copybooks'):
+            copybooks_list = ', '.join([f'`{c}.cpy`' for c in sorted(nomenclature['copybooks'])[:5]])
+            nomenclature_text += f"- Copybooks: {copybooks_list}\n"
+        
+        if nomenclature.get('dclgens'):
+            dclgens_list = ', '.join([f'`{d}.cpy`' for d in sorted(nomenclature['dclgens'])[:5]])
+            nomenclature_text += f"- DCLGENs: {dclgens_list}\n"
+        
+        if nomenclature.get('jcls'):
+            jcls_list = ', '.join([f'`{j}.jcl`' for j in sorted(nomenclature['jcls'])[:5]])
+            nomenclature_text += f"- JCLs: {jcls_list}\n"
+        
+        if not nomenclature_text:
+            nomenclature_text = "- No se identificaron patrones específicos\n"
+        
         # Recopilar incidencias
         incidents_text = ''
         incident_num = 1
@@ -268,11 +330,7 @@ class MarkdownReportGenerator:
         return f"""## Observaciones Técnicas
 
 ### Patrones de Nomenclatura
-- Programas COBOL: `B471J*.cbl`, `VB4700*.cbl`, `VI471001.cbl`
-- Copybooks: `R470JBE*.cpy`, `X*.cpy`
-- DCLGENs: `T47*.cpy`
-- JCLs: `X03247*.jcl`
-
+{nomenclature_text}
 ### Incidencias
 {incidents_text}"""
     
